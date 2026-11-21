@@ -28,10 +28,19 @@ def test_unload_doubles_quotes_and_validates_months():
         training.in_list(["2024-01'; drop table x; --"])
 
 
-def test_the_gate_fails_closed_until_it_is_decided(monkeypatch):
+def test_the_decided_gate_is_5_percent_and_10_ms():
+    assert (training.MARGIN, training.LATENCY_BUDGET_MS) == (0.05, 10.0)
+    assert gate({"mae_min": 3.6355, "champion_mae_min": 3.9563, "p95_latency_ms": 3.04})[0]  # the real S2 numbers: 8.1%, 3 ms
+    assert not gate({"mae_min": 3.80, "champion_mae_min": 3.9563, "p95_latency_ms": 3.0})[0]  # only 4%
+    assert not gate({"mae_min": 3.0, "champion_mae_min": 4.0, "p95_latency_ms": 10.5})[0]  # accurate but over budget
+
+
+def test_the_gate_fails_closed_when_a_limit_is_unset(monkeypatch):
+    monkeypatch.setattr(training, "MARGIN", None)
     assert not gate(GOOD)[0]
     monkeypatch.setattr(training, "MARGIN", 0.05)
-    assert not gate(GOOD)[0]  # budget still unset
+    monkeypatch.setattr(training, "LATENCY_BUDGET_MS", None)
+    assert not gate(GOOD)[0]
 
 
 def test_the_gate_needs_the_margin_and_the_latency_budget(monkeypatch):
@@ -84,7 +93,8 @@ def test_training_registers_a_tagged_version_and_compares_with_the_baseline(stac
     assert _alias(stack["client"], "challenger") is None and _alias(stack["client"], "champion") is None
 
 
-def test_no_challenger_while_the_gate_is_closed(stack):
+def test_no_challenger_while_the_gate_is_closed(stack, monkeypatch):
+    monkeypatch.setattr(training, "MARGIN", None)
     _train(stack)
     result = _train(stack, challenger)
     assert not result.success

@@ -13,8 +13,10 @@
 Decisions: the window (decisions/008-training-window.md): train on the WINDOW_MONTHS months before the
 newest month that has features, and test on that newest month, never on a random split of the same
 months. What stays in the notebook (decisions/009): the notebook explores; everything repeatable that
-produces a registered model is here. The promotion metric, margin and latency budget are decision 010:
-until MARGIN and LATENCY_BUDGET_MS are set, the gate fails closed and no challenger is ever set.
+produces a registered model is here. The promotion rule is decision 010 (decisions/010-promotion-gate.md):
+overall holdout MAE (the contract's mae_min) must beat the champion's, or the v1 baseline's before there is
+one, by MARGIN, and p95 single-row latency must stay within LATENCY_BUDGET_MS. If either constant is None
+the gate fails closed and no challenger is ever set.
 """
 
 import os
@@ -34,9 +36,9 @@ from ..runs import last_metadata
 
 WINDOW_MONTHS = 3  # decision 008: the months that train; the month after them is the holdout
 
-# Decision 010 (promotion metric and margin). None means "not decided yet": the gate fails closed.
-MARGIN: float | None = None  # the new MAE must be at least this fraction below the champion's (or baseline's)
-LATENCY_BUDGET_MS: float | None = None  # p95 single-row predict latency must not exceed this
+# Decision 010 (promotion metric and margin). None would mean "not decided": the gate then fails closed.
+MARGIN: float | None = 0.05  # the new MAE must be at least this fraction below the champion's (or baseline's)
+LATENCY_BUDGET_MS: float | None = 10.0  # p95 single-row predict latency must not exceed this
 
 STAGING = "staging.trip_features"
 
@@ -62,7 +64,7 @@ def unload(select: str, bucket: str, prefix: str) -> str:
 def gate(metrics: dict) -> tuple[bool, str]:
     """Does this evaluation clear the promotion gate? Fails closed while the decision is unmade."""
     if MARGIN is None or LATENCY_BUDGET_MS is None:
-        return False, "the promotion margin and latency budget are not set yet (decision 010), so nothing is promoted"
+        return False, "the promotion margin or latency budget is unset (decision 010), so nothing is promoted"
     mae, champion, p95 = float(metrics["mae_min"]), float(metrics["champion_mae_min"]), float(metrics["p95_latency_ms"])
     needed = champion * (1 - MARGIN)
     if mae > needed:
