@@ -4,6 +4,8 @@ import dagster as dg
 from fakes import FakeRedshift, fake_bucket
 
 from labpipes.contracts import trips_schema
+from labpipes.defs.feature_check import feature_contract
+from labpipes.defs.features import trip_features
 from labpipes.defs.marts import zone_hour_stats
 from labpipes.defs.quality import ROW_BOUNDS, SHARE_RULES, judge, no_duplicates, raw_staging_parity, row_count_bounds, share_checks
 from labpipes.defs.raw_trips import raw_trips
@@ -57,6 +59,13 @@ class ScriptedRedshift(FakeRedshift):
         if "as bad" in sql:
             hit = [n for cond, n in self.bad.items() if cond in sql]
             return [{"bad": hit[0] if hit else 0, "total": TOTAL}]
+        if "information_schema.columns" in sql:
+            from labpipes.contracts import features_contract
+            from labpipes.defs.feature_check import expected_columns
+
+            return [{"column_name": c, "data_type": t} for c, t in expected_columns(features_contract()).items()]
+        if "from staging.trip_features" in sql and "as bad" in sql:
+            return [{"total": TOTAL, "bad": 0}]
         if "as raw_rows" in sql:
             return [{"raw_rows": TOTAL, "stg_rows": TOTAL}]
         return super().query(sql)
@@ -65,8 +74,8 @@ class ScriptedRedshift(FakeRedshift):
 def _run(bad: dict):
     redshift = ScriptedRedshift(cluster_id="lab", database="lab", db_user="labadmin", rows=TOTAL, bad=bad)
     defs = dg.Definitions(
-        assets=[trip_files, raw_trips, stg_trips, taxi_zones, zone_hour_stats],
-        asset_checks=[schema_contract, *share_checks, no_duplicates, row_count_bounds, raw_staging_parity],
+        assets=[trip_files, raw_trips, stg_trips, taxi_zones, zone_hour_stats, trip_features],
+        asset_checks=[schema_contract, feature_contract, *share_checks, no_duplicates, row_count_bounds, raw_staging_parity],
         jobs=[ingest_month],
         resources={"redshift": redshift, "data_bucket": fake_bucket({MONTH: ("e", trips_schema())})},
     )
