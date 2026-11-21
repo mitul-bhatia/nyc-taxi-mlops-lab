@@ -1,7 +1,7 @@
 """S1: the S3 sensor (and the job it starts).
 
 Watch trips/ in the data bucket (DataBucket.trip_files). When a month's file appears or changes, add
-the month to the trip_months partitions and request a run that goes from trip_files to zone_hour_stats.
+the month to the trip_months partitions and request a run that goes from trip_files to zone_hour_stats and trip_features (S2).
 
 The cursor remembers each month's ETag. A new month, or a month whose file was replaced (new ETag),
 gets a run; the run_key includes the ETag, so asking twice for the same file is a no-op. taxi_zones is
@@ -19,7 +19,7 @@ from ..resources import DataBucket
 
 ingest_month = dg.define_asset_job(
     "ingest_month",
-    selection=dg.AssetSelection.assets("trip_files", "raw_trips", "stg_trips", "taxi_zones", "zone_hour_stats"),
+    selection=dg.AssetSelection.assets("trip_files", "raw_trips", "stg_trips", "taxi_zones", "zone_hour_stats", "trip_features"),
 )
 
 
