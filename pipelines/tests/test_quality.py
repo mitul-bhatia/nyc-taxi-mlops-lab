@@ -1,7 +1,6 @@
 """S1 quality checks: the thresholds' logic, and that blocking checks stop the mart but warnings don't."""
 
 import dagster as dg
-import pytest
 from fakes import FakeRedshift, fake_bucket
 
 from labpipes.contracts import trips_schema
