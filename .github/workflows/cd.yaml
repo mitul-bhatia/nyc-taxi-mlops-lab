@@ -1,0 +1,55 @@
+# S0 CD: after CI succeeds on main, deploy that exact commit's image on the app host, then smoke-test
+# /version. Runs on the self-hosted runner (label lab-app) with the host's instance profile
+# (decisions/001-runner-credentials.md). It is triggered only by workflow_run, never by a pull
+# request, and it checks that the CI run was a push in this repository, not a fork's.
+name: cd
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cd
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: [self-hosted, lab-app]
+    env:
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Log in to GHCR
+        env:
+          GH_ACTOR: ${{ github.actor }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+      - name: Deploy
+        run: |
+          export IMAGE_PREFIX="ghcr.io/${GITHUB_REPOSITORY,,}" IMAGE_TAG="$HEAD_SHA"
+          docker compose -f deploy/compose.app.yaml up -d --pull always --wait --wait-timeout 120
+      - name: Smoke test /version
+        run: |
+          for i in $(seq 1 20); do
+            body=$(curl -fsS http://127.0.0.1/version || true)
+            echo "attempt $i: $body"
+            if [ "$(echo "$body" | jq -r '.git_sha // empty')" = "$HEAD_SHA" ]; then exit 0; fi
+            sleep 3
+          done
+          echo "/version never reported $HEAD_SHA" >&2
+          exit 1
+      - name: Log out of GHCR
+        if: always()
+        run: docker logout ghcr.io
