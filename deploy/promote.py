@@ -46,5 +46,5 @@ else:
     client.set_model_version_tag(NAME, version, "previous_champion", outgoing)
     client.set_registered_model_alias(NAME, "champion", version)
 print(f"promoted v{version} (MAE {mae:.3f}, p95 {p95:.1f} ms); outgoing champion: v{outgoing}")
-with open(os.environ.get("GITHUB_OUTPUT", os.devnull), "a") as f:
-    f.write(f"version={version}\noutgoing={outgoing}\n")
+print(f"OUT version={version}")
+print(f"OUT outgoing={outgoing}")
