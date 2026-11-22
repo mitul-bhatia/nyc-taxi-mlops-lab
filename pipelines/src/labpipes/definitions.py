@@ -8,7 +8,7 @@ LAB_ARTIFACT_BUCKET, MLFLOW_TRACKING_URI and (S6) LLM_HOST.
 import dagster as dg
 
 from . import defs as defs_package
-from .resources import ArtifactBucket, DataBucket, LlmEmbed, MlflowTracking, RagStore, RedshiftData, WikiApi
+from .resources import ArtifactBucket, DataBucket, LlmChat, LlmEmbed, MlflowTracking, RagStore, RedshiftData, WikiApi
 
 # Assets that write to Redshift share the "redshift" pool, limited to one at a time (dagster.yaml):
 # concurrent deletes and inserts on the same table abort with serializable isolation errors.
@@ -25,6 +25,7 @@ defs = dg.load_definitions_from_package_module(
         "tracking": MlflowTracking(tracking_uri=dg.EnvVar("MLFLOW_TRACKING_URI")),
         "wiki": WikiApi(),
         "embed": LlmEmbed(llm_host=dg.EnvVar("LLM_HOST")),
+        "chat": LlmChat(llm_host=dg.EnvVar("LLM_HOST")),
         "rag": RagStore(),
     },
 )
