@@ -1,9 +1,30 @@
-# Service level objectives for the ride app (S5, decision 013). rules/slo.rules.yaml computes them.
+# Service level objectives for the ride app (S5, decision 016). rules/slo.rules.yaml computes them.
 # One entry per SLO: what's measured (the SLI, from contracts/metrics.yaml), the objective, why that
 # number, and the alert that tells you it's being missed.
 slos:
   - name: predict-availability
-    sli:
-    objective:
-    why:
-    alert:
+    sli: "share of POST /predict answers that are not 5xx (lab_http_requests_total{route=\"/predict\"})"
+    objective: "99.5% over 28 days (error budget 0.5%)"
+    why: >-
+      A rider who gets an error has no quote, which is the one thing the product does. 99.9% would
+      leave about 40 minutes of failures a month, which one person with no on-call can't defend and
+      a lab with deploys and restarts can't promise; 99% (7 hours) is too loose for a single-feature app.
+    alert: "PredictAvailabilityFastBurn (page: 14.4x over 30m and 5m), PredictAvailabilitySlowBurn (ticket: 6x over 6h and 30m)"
+  - name: predict-latency
+    sli: "share of POST /predict answers faster than 250 ms (lab_http_request_duration_seconds_bucket, le=0.25)"
+    objective: "95% over 28 days (error budget 5%)"
+    why: >-
+      The app gives serving 300 ms before falling back to the median, so a quote slower than 250 ms is
+      already near that cut-off. Serving's p95 is about 3 ms, so 95% under 250 ms is generous on
+      purpose: a stricter number (99%, or 100 ms) would page on a cold cache or one slow request
+      and train me to ignore the page. It is a percentile of a histogram, not an average, because the
+      slow tail is what riders notice and an average hides it.
+    alert: "PredictLatencyFastBurn (page), PredictLatencySlowBurn (ticket)"
+  - name: predict-model
+    sli: "share of quotes the model gave rather than the static-median fallback (lab_predictions_total{source=\"model\"})"
+    objective: "99% over 28 days (error budget 1%)"
+    why: >-
+      The fallback answers HTTP 200, so availability can't see that serving is down. This SLI is the
+      one that notices riders getting 12.25 minutes for every trip. 99% allows for a reload or a
+      restart gap; a stricter number would page on every promotion.
+    alert: "PredictModelFastBurn (page), PredictModelSlowBurn (ticket)"
