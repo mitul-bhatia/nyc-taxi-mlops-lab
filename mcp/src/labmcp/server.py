@@ -13,6 +13,7 @@ A tool that fails raises; the client sees an error result with the message, neve
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import difflib
 import os
@@ -104,12 +105,43 @@ Metric = Literal["trip_count", "median_duration_min", "p90_duration_min"]
 
 @mcp.tool(description="Predict the duration in minutes of a yellow-taxi trip between two NYC TLC taxi zones, using the champion model.")
 async def predict_duration(pickup_zone: Zone, dropoff_zone: Zone, hour: Hour, day_of_week: Day) -> dict:
-    raise NotImplementedError("S7: predict_duration isn't built yet")
+    # Names become ids here, so a typo fails with suggestions and nothing else reaches serving.
+    body = {"pickup_zone_id": zone_id(pickup_zone), "dropoff_zone_id": zone_id(dropoff_zone),
+            "pickup_hour": hour, "pickup_dow": DAYS.index(day_of_week)}
+    out = await champion("POST", "/predict", body)
+    return {"duration_minutes": round(out["duration_minutes"], 1), "pickup_zone": pickup_zone, "dropoff_zone": dropoff_zone,
+            "hour": hour, "day_of_week": day_of_week, "model": out["model"]}
+
+
+# Every statement the tool can ever run is one of these constants: the metric picks the statement (a lookup,
+# never a string built from it), and the zone and hour travel only as named parameters (decision 021).
+_STATS_SQL = {
+    (metric, by_hour): (
+        f"select pickup_hour, {metric} as value, first_month, last_month from marts.zone_hour_stats "
+        "where pickup_zone_id = cast(:zone_id as integer)"
+        + (" and pickup_hour = cast(:hour as integer)" if by_hour else "")
+        + " order by pickup_hour"
+    )
+    for metric in METRICS
+    for by_hour in (False, True)
+}
+
+
+@cache
+def warehouse() -> Warehouse:
+    return Warehouse()
 
 
 @mcp.tool(description="Historical trip statistics for one pickup zone from the zone_hour_stats mart.")
-def query_zone_stats(zone: Zone, metric: Metric, hour: Annotated[int | None, Field(ge=0, le=23, description="Optional: restrict to one pickup hour.")] = None) -> dict:
-    raise NotImplementedError("S7: query_zone_stats isn't built yet")
+async def query_zone_stats(zone: Zone, metric: Metric, hour: Annotated[int | None, Field(ge=0, le=23, description="Optional: restrict to one pickup hour.")] = None) -> dict:
+    zid = zone_id(zone)
+    sql = _STATS_SQL[(metric, hour is not None)]  # KeyError for anything but the three known metrics
+    params: dict[str, object] = {"zone_id": zid} | ({"hour": hour} if hour is not None else {})
+    rows = await asyncio.to_thread(warehouse().query, sql, params)
+    if not rows:
+        return {"zone": zone, "metric": metric, "hour": hour, "values": [], "note": "no trips recorded for this zone and hour"}
+    return {"zone": zone, "metric": metric, "hour": hour, "period": f"{rows[0]['first_month']}..{rows[0]['last_month']}",
+            "values": [{"hour": int(r["pickup_hour"]), "value": None if r["value"] is None else round(float(r["value"]), 2)} for r in rows]}
 
 
 @mcp.custom_route("/healthz", methods=["GET"])

@@ -152,13 +152,31 @@ def build_messages(question: str, chunks: list[Chunk]) -> list[dict]:
             {"role": "user", "content": f"Wiki excerpts:\n\n{excerpts}\n\nQuestion: {question}"}]
 
 
-ALLOWED_TOOLS: set[str] = set()  # S7: which of the MCP server's tools the assistant may call
-TOOLS_PROMPT = ""  # S7: when to use which tool
+# S7 (decision 020): all three tools are read-only (the MCP server's database user can only read marts), so none
+# needs a person to confirm. The model never sees a tool that isn't listed here.
+ALLOWED_TOOLS: set[str] = {"get_model_info", "predict_duration", "query_zone_stats"}
+TOOLS_PROMPT = (
+    "\n\nYou can also call tools, and their results are valid sources like the wiki excerpts. "
+    "get_model_info: which model version is serving riders and how accurate it is. "
+    "predict_duration: the predicted trip time in minutes between two named NYC taxi zones at an hour and a weekday; "
+    "use it whenever the rider asks how long a trip will take. "
+    "query_zone_stats: historical trip counts or median / 90th-percentile durations for one pickup zone. "
+    "Call a tool only when the rider's question needs it. Pass zone names as TLC zone names, for example "
+    "'JFK Airport' or 'Times Sq/Theatre District'. Wiki excerpts answer policy questions; tools answer numbers. "
+    "Report a tool's numbers exactly as it returned them."
+)
+MAX_ZONE_CHARS = 64
 
 
 def allow_tool_call(name: str, arguments: dict, question: str) -> tuple[bool, str]:
-    """S7: decide whether one tool call the model asked for may run (and what to say if not)."""
-    return name in ALLOWED_TOOLS, ""
+    """Decide whether one tool call the model asked for may run (and what to say if not). Today: the tool must
+    be allowed and its text arguments must look like a zone name. (E3 adds the check on where they came from.)"""
+    if name not in ALLOWED_TOOLS:
+        return False, f"{name} is not an allowed tool"
+    for key in ("zone", "pickup_zone", "dropoff_zone"):
+        if key in arguments and not (isinstance(arguments[key], str) and 0 < len(arguments[key]) <= MAX_ZONE_CHARS):
+            return False, f"{key} must be a zone name of at most {MAX_ZONE_CHARS} characters"
+    return True, ""
 
 
 @asynccontextmanager
