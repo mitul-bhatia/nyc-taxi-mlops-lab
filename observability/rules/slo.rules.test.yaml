@@ -70,3 +70,23 @@ tests:
           - exp_labels: {severity: page, slo: predict-latency}
             exp_annotations:
               summary: "Most /predict answers are slower than 250 ms."
+
+  # 5. Only healthy traffic, so no 5xx series and no fallback series exist: the ratios must read 0
+  #    (all good), not "no data".
+  - interval: 1m
+    input_series:
+      - series: 'lab_http_requests_total{route="/predict",method="POST",code="200"}'
+        values: "0+200x60"
+      - series: 'lab_predictions_total{source="model",alias="champion",version="2"}'
+        values: "0+200x60"
+    promql_expr_test:
+      - expr: lab:predict_error_ratio:rate5m
+        eval_time: 30m
+        exp_samples:
+          - labels: 'lab:predict_error_ratio:rate5m'
+            value: 0
+      - expr: lab:predict_fallback_ratio:rate30m
+        eval_time: 40m
+        exp_samples:
+          - labels: 'lab:predict_fallback_ratio:rate30m'
+            value: 0
