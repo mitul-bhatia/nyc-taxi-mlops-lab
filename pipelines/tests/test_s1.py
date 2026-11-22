@@ -95,3 +95,23 @@ def test_raw_trips_rejects_a_bad_month_before_any_sql():
     with pytest.raises(ValueError):
         raw_trips(dg.build_asset_context(partition_key="2024-03'; drop table x; --"), fake_redshift(), fake_bucket({}))
     assert not any("drop table" in s for s in LOG)
+
+
+def test_mcp_user_is_created_once_and_only_granted_marts_select():
+    from labpipes.defs.marts import MCP_DB_USER, mcp_user_statements
+
+    first = mcp_user_statements("lab_ro", exists=False)
+    again = mcp_user_statements("lab_ro", exists=True)
+    assert first[0] == "create user lab_ro password disable" and first[1:] == again
+    joined = " ".join(first).lower()
+    assert "grant select on marts.zone_hour_stats to lab_ro" in joined and "usage on schema marts" in joined
+    grants = [st.lower() for st in first if st.lower().startswith(("grant", "alter default"))]
+    assert not any(w in " ".join(grants) for w in ("ingest", "staging", "insert", "update", "delete", "all privileges", "create"))
+    assert "revoke create on schema public from public" in joined  # PUBLIC could create tables in schema public
+    assert MCP_DB_USER == "lab_ro"
+    for bad in ("labadmin", "x; drop table marts.zone_hour_stats", "Lab_RO", ""):
+        try:
+            mcp_user_statements(bad, exists=False)
+        except ValueError:
+            continue
+        raise AssertionError(f"{bad!r} was accepted")
