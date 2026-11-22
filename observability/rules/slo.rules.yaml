@@ -1,5 +1,96 @@
-# SLO recording and alerting rules (S5, decision 013), evaluated by your Grafana Cloud stack's ruler.
+# SLO recording and alerting rules (S5, decision 016), evaluated by your Grafana Cloud stack's ruler.
 # Prometheus rule format: https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/
 # Metric names are contracts/metrics.yaml's. `make check` runs promtool on this file and on any
 # *.test.yaml next to it.
-groups: []
+#
+# Three SLIs, each written as a BAD ratio (bad events / all events) so burn rate = ratio / error budget:
+#   availability  /predict answers that are 5xx            budget 0.5%   (objective 99.5%)
+#   latency       /predict answers slower than 250 ms      budget 5%     (objective 95% under 250 ms)
+#   model         quotes the static median gave, not model budget 1%     (objective 99% from the model)
+# The model SLI is the one that catches "HTTP 200 with the wrong number": when serving is down the app
+# still answers 200 with the median, so availability stays green.
+#
+# Alerts follow the multi-window burn-rate pattern: page when BOTH a long and a short window burn fast
+# (the long one proves it's real, the short one proves it's still happening, so it resets quickly), and
+# open a ticket on a slower burn. Fast: 14.4x budget over 30m and 5m. Slow: 6x over 6h and 30m.
+groups:
+  - name: lab-sli
+    rules:
+      # --- availability ---
+      - record: lab:predict_error_ratio:rate5m
+        expr: |
+          sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[5m]))
+            / sum(rate(lab_http_requests_total{route="/predict"}[5m]))
+      - record: lab:predict_error_ratio:rate30m
+        expr: |
+          sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[30m]))
+            / sum(rate(lab_http_requests_total{route="/predict"}[30m]))
+      - record: lab:predict_error_ratio:rate6h
+        expr: |
+          sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[6h]))
+            / sum(rate(lab_http_requests_total{route="/predict"}[6h]))
+      # --- latency: share of /predict slower than 250 ms (the 0.25 bucket is in the contract) ---
+      - record: lab:predict_slow_ratio:rate5m
+        expr: |
+          1 - sum(rate(lab_http_request_duration_seconds_bucket{route="/predict",le="0.25"}[5m]))
+                / sum(rate(lab_http_request_duration_seconds_count{route="/predict"}[5m]))
+      - record: lab:predict_slow_ratio:rate30m
+        expr: |
+          1 - sum(rate(lab_http_request_duration_seconds_bucket{route="/predict",le="0.25"}[30m]))
+                / sum(rate(lab_http_request_duration_seconds_count{route="/predict"}[30m]))
+      - record: lab:predict_slow_ratio:rate6h
+        expr: |
+          1 - sum(rate(lab_http_request_duration_seconds_bucket{route="/predict",le="0.25"}[6h]))
+                / sum(rate(lab_http_request_duration_seconds_count{route="/predict"}[6h]))
+      # --- model: share of quotes the fallback gave ---
+      - record: lab:predict_fallback_ratio:rate5m
+        expr: |
+          sum(rate(lab_predictions_total{source="fallback"}[5m])) / sum(rate(lab_predictions_total[5m]))
+      - record: lab:predict_fallback_ratio:rate30m
+        expr: |
+          sum(rate(lab_predictions_total{source="fallback"}[30m])) / sum(rate(lab_predictions_total[30m]))
+      - record: lab:predict_fallback_ratio:rate6h
+        expr: |
+          sum(rate(lab_predictions_total{source="fallback"}[6h])) / sum(rate(lab_predictions_total[6h]))
+
+  - name: lab-slo-alerts
+    rules:
+      # availability: budget 0.005 -> fast threshold 14.4 * 0.005 = 0.072, slow 6 * 0.005 = 0.03
+      - alert: PredictAvailabilityFastBurn
+        expr: lab:predict_error_ratio:rate30m > 0.072 and lab:predict_error_ratio:rate5m > 0.072
+        for: 1m
+        labels: {severity: page, slo: predict-availability}
+        annotations:
+          summary: "Riders are getting /predict errors fast enough to use the month's error budget in about 2 days."
+      - alert: PredictAvailabilitySlowBurn
+        expr: lab:predict_error_ratio:rate6h > 0.03 and lab:predict_error_ratio:rate30m > 0.03
+        for: 5m
+        labels: {severity: ticket, slo: predict-availability}
+        annotations:
+          summary: "A steady trickle of /predict errors is burning the error budget."
+      # latency: budget 0.05 -> fast 0.72, slow 0.3
+      - alert: PredictLatencyFastBurn
+        expr: lab:predict_slow_ratio:rate30m > 0.72 and lab:predict_slow_ratio:rate5m > 0.72
+        for: 1m
+        labels: {severity: page, slo: predict-latency}
+        annotations:
+          summary: "Most /predict answers are slower than 250 ms."
+      - alert: PredictLatencySlowBurn
+        expr: lab:predict_slow_ratio:rate6h > 0.3 and lab:predict_slow_ratio:rate30m > 0.3
+        for: 5m
+        labels: {severity: ticket, slo: predict-latency}
+        annotations:
+          summary: "More /predict answers than allowed are slower than 250 ms."
+      # model: budget 0.01 -> fast 0.144, slow 0.06
+      - alert: PredictModelFastBurn
+        expr: lab:predict_fallback_ratio:rate30m > 0.144 and lab:predict_fallback_ratio:rate5m > 0.144
+        for: 1m
+        labels: {severity: page, slo: predict-model}
+        annotations:
+          summary: "Riders are getting the static median instead of the model: serving is down, slow, or has no champion."
+      - alert: PredictModelSlowBurn
+        expr: lab:predict_fallback_ratio:rate6h > 0.06 and lab:predict_fallback_ratio:rate30m > 0.06
+        for: 5m
+        labels: {severity: ticket, slo: predict-model}
+        annotations:
+          summary: "A steady share of quotes is coming from the fallback, not the model."
