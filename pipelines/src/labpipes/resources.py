@@ -251,6 +251,27 @@ class LlmEmbed(dg.ConfigurableResource):
         return out
 
 
+class LlmChat(dg.ConfigurableResource):
+    """llama.cpp's chat server on the LLM host (runtime.yaml: llm-chat, port 8080), used by the agentic
+    chunker (decision 018) to decide where a page splits. Temperature 0 and a fixed seed, so a page
+    chunks the same way twice; JSON output only; a short answer, since the model returns paragraph
+    numbers, not text. One request at a time: the host has two cores."""
+
+    llm_host: str
+    port: int = 8080
+    timeout_s: float = 300.0
+
+    def complete_json(self, system: str, user: str) -> str:
+        import urllib.request
+
+        body = json.dumps({"model": "chat", "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                           "temperature": 0, "seed": 7, "max_tokens": 120, "cache_prompt": True,
+                           "response_format": {"type": "json_object"}}).encode()
+        req = urllib.request.Request(f"http://{self.llm_host}:{self.port}/v1/chat/completions", body, {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=self.timeout_s) as r:
+            return json.load(r)["choices"][0]["message"]["content"] or ""
+
+
 class RagStore(dg.ConfigurableResource):
     """The `rag` database on RDS (pgvector), as the RDS admin user from Secrets Manager (lab/rds)."""
 

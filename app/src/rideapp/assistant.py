@@ -114,20 +114,42 @@ async def connect() -> psycopg.AsyncConnection:
                                                  password=s["password"], dbname="rag", autocommit=True, connect_timeout=5)
 
 
-TOP_K = 0  # decision 015
+TOP_K = 3  # decision 018: about 100 tokens a chunk, ~8-11 s of prompt time each on the LLM host
 
 
 async def retrieve(question_vector: list[float]) -> list[Chunk]:
-    """S6: the chunks closest to the question from rag.chunks (pgvector), best first. Until then: none."""
-    return []
+    """The TOP_K chunks closest to the question by cosine distance, best first (rag.chunks, pgvector HNSW
+    index: decision 019). The score is cosine similarity, 1 - distance, as the contract says."""
+    vec = vector_literal(question_vector)
+    async with await connect() as conn:
+        cur = await conn.execute(
+            """select c.id, c.page_id, p.title, c.content, 1 - (c.embedding <=> %s::vector) as score
+               from rag.chunks c join rag.pages p on p.id = c.page_id
+               where c.embedding is not null
+               order by c.embedding <=> %s::vector limit %s""",
+            (vec, vec, TOP_K),
+        )
+        rows = await cur.fetchall()
+    return [Chunk(id=r[0], page_id=r[1], title=r[2], content=r[3], score=float(r[4])) for r in rows]
 
 
-SYSTEM_PROMPT = "You are the support assistant of a New York ride-hailing app."
+# Fixed text, so llama.cpp keeps it as a cached prefix: only the excerpts and the question change.
+SYSTEM_PROMPT = (
+    "You are the support assistant of a New York ride-hailing app. Answer the rider's question using ONLY the "
+    "wiki excerpts in their message. If the excerpts do not contain the answer, say that you do not have that "
+    "information; never guess and never use outside knowledge. Be concise (two to four sentences) and name the "
+    "wiki page you used in parentheses."
+)
 
 
 def build_messages(question: str, chunks: list[Chunk]) -> list[dict]:
-    """S6: the prompt. Until then the model answers from what it already knows (nothing about our wiki)."""
-    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": question}]
+    """Fixed system prompt; the retrieved excerpts go in the user turn, before the question."""
+    if chunks:
+        excerpts = "\n\n".join(f"Excerpt {i} (page: {c.title}):\n{c.content}" for i, c in enumerate(chunks, 1))
+    else:
+        excerpts = "(no wiki excerpts were found)"
+    return [{"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Wiki excerpts:\n\n{excerpts}\n\nQuestion: {question}"}]
 
 
 ALLOWED_TOOLS: set[str] = set()  # S7: which of the MCP server's tools the assistant may call

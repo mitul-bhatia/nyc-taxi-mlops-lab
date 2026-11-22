@@ -29,3 +29,8 @@ output "artifact_bucket" {
 output "platform_private_ip" {
   value = module.platform.private_ip
 }
+
+# S6: the app and the platform reach the LLM host's chat (8080) and embedding (8081) servers here.
+output "llm_private_ip" {
+  value = module.llm.private_ip
+}

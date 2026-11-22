@@ -28,6 +28,7 @@ jobs:
     runs-on: [self-hosted, lab-app]
     env:
       HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      LLM_HOST: ${{ vars.LLM_HOST }}  # S6: the assistant's chat and embedding server (compose.web.yaml)
     steps:
       - uses: actions/checkout@v7.0.1
         with:

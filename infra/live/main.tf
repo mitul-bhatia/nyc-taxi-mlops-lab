@@ -73,3 +73,10 @@ module "grafana_secret" {
   name        = "lab/grafana"
   description = "Grafana Cloud remote-write URL, user and token for Alloy (value is put out of band)."
 }
+
+# S6: the Langfuse project keys for the app's tracing (value is put out of band).
+module "langfuse_secret" {
+  source      = "../modules/secret"
+  name        = "lab/langfuse"
+  description = "Langfuse host and project keys for the assistant's traces (value is put out of band)."
+}
