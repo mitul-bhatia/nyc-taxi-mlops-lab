@@ -17,3 +17,7 @@ The riskiest part of a deploy is "does this image start and answer", and the smo
 ## What would show this was wrong
 
 A deploy that passed smoke but broke riders (the smoke test is too shallow, so add checks), or a deploy that must not go out without review (e.g. a contract change), which would call for the approval gate.
+
+## Evidence from the first run
+
+The first deploy of this stack (live was `none`, so it went to blue) passed smoke on the exact commit and switched in a 41 s job. Every later deploy goes to the idle colour.
