@@ -24,3 +24,8 @@ output "rds_endpoint" {
 output "artifact_bucket" {
   value = module.artifacts.name
 }
+
+# S3: serving finds MLflow here (gh variable MLFLOW_TRACKING_URI).
+output "platform_private_ip" {
+  value = module.platform.private_ip
+}
