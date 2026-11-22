@@ -3,6 +3,9 @@
 # Metric names are contracts/metrics.yaml's. `make check` runs promtool on this file and on any
 # *.test.yaml next to it.
 #
+# A bad-event counter only has a series after its first bad event, so every numerator ends in
+# `or vector(0)`: no 5xx and no fallbacks must read as ratio 0 (all good), not as "no data".
+#
 # Three SLIs, each written as a BAD ratio (bad events / all events) so burn rate = ratio / error budget:
 #   availability  /predict answers that are 5xx            budget 0.5%   (objective 99.5%)
 #   latency       /predict answers slower than 250 ms      budget 5%     (objective 95% under 250 ms)
@@ -19,15 +22,15 @@ groups:
       # --- availability ---
       - record: lab:predict_error_ratio:rate5m
         expr: |
-          sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[5m]))
+          (sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[5m])) or vector(0))
             / sum(rate(lab_http_requests_total{route="/predict"}[5m]))
       - record: lab:predict_error_ratio:rate30m
         expr: |
-          sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[30m]))
+          (sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[30m])) or vector(0))
             / sum(rate(lab_http_requests_total{route="/predict"}[30m]))
       - record: lab:predict_error_ratio:rate6h
         expr: |
-          sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[6h]))
+          (sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[6h])) or vector(0))
             / sum(rate(lab_http_requests_total{route="/predict"}[6h]))
       # --- latency: share of /predict slower than 250 ms (the 0.25 bucket is in the contract) ---
       - record: lab:predict_slow_ratio:rate5m
@@ -45,13 +48,13 @@ groups:
       # --- model: share of quotes the fallback gave ---
       - record: lab:predict_fallback_ratio:rate5m
         expr: |
-          sum(rate(lab_predictions_total{source="fallback"}[5m])) / sum(rate(lab_predictions_total[5m]))
+          (sum(rate(lab_predictions_total{source="fallback"}[5m])) or vector(0)) / sum(rate(lab_predictions_total[5m]))
       - record: lab:predict_fallback_ratio:rate30m
         expr: |
-          sum(rate(lab_predictions_total{source="fallback"}[30m])) / sum(rate(lab_predictions_total[30m]))
+          (sum(rate(lab_predictions_total{source="fallback"}[30m])) or vector(0)) / sum(rate(lab_predictions_total[30m]))
       - record: lab:predict_fallback_ratio:rate6h
         expr: |
-          sum(rate(lab_predictions_total{source="fallback"}[6h])) / sum(rate(lab_predictions_total[6h]))
+          (sum(rate(lab_predictions_total{source="fallback"}[6h])) or vector(0)) / sum(rate(lab_predictions_total[6h]))
 
   - name: lab-slo-alerts
     rules:

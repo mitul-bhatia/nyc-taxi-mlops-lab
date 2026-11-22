@@ -487,9 +487,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "custom": {},
-          "min": 0.9,
-          "max": 1
+          "custom": {}
         },
         "overrides": []
       },
@@ -604,9 +602,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "custom": {},
-          "min": 0.9,
-          "max": 1
+          "custom": {}
         },
         "overrides": []
       },
@@ -721,9 +717,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "custom": {},
-          "min": 0.9,
-          "max": 1
+          "custom": {}
         },
         "overrides": []
       },
