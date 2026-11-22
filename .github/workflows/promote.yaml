@@ -31,12 +31,12 @@ jobs:
         id: promote
         run: |
           set -o pipefail
-          : > "$RUNNER_TEMP/out"
           image=$(docker inspect lab-serving-serving-champion-1 --format '{{.Config.Image}}')
           docker run --rm --network lab -e MLFLOW_TRACKING_URI -e MARGIN=0.05 -e LATENCY_BUDGET_MS=10 \
-            -e GITHUB_OUTPUT=/out -v "$PWD/deploy/promote.py:/promote.py:ro" -v "$RUNNER_TEMP/out:/out" \
-            --entrypoint python "$image" /promote.py "$VERSION" | tee -a "$GITHUB_STEP_SUMMARY"
-          cat "$RUNNER_TEMP/out" >> "$GITHUB_OUTPUT"
+            -v "$PWD/deploy/promote.py:/promote.py:ro" \
+            --entrypoint python "$image" /promote.py "$VERSION" | tee promote.out
+          grep -v '^OUT ' promote.out >> "$GITHUB_STEP_SUMMARY"
+          grep '^OUT ' promote.out | sed 's/^OUT //' >> "$GITHUB_OUTPUT"
       - name: Make serving use it (reload, no gap)
         run: deploy/web.sh reload champion
       - name: Check /predict answers with the new champion
