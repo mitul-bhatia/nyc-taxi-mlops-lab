@@ -1,0 +1,52 @@
+# Promotion (S3): move `champion` to a version the pipeline evaluated. Manual, and it waits for a
+# reviewer on the `production` environment. Runs on the app host's runner (it can reach MLflow and the
+# serving containers). Never triggered by a pull request.
+name: promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Model version to promote (empty = the current challenger)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: [self-hosted, lab-app]
+    environment: production
+    env:
+      MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Promote
+        id: promote
+        run: |
+          set -o pipefail
+          : > "$RUNNER_TEMP/out"
+          image=$(docker inspect lab-serving-serving-champion-1 --format '{{.Config.Image}}')
+          docker run --rm --network lab -e MLFLOW_TRACKING_URI -e MARGIN=0.05 -e LATENCY_BUDGET_MS=10 \
+            -e GITHUB_OUTPUT=/out -v "$PWD/deploy/promote.py:/promote.py:ro" -v "$RUNNER_TEMP/out:/out" \
+            --entrypoint python "$image" /promote.py "$VERSION" | tee -a "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/out" >> "$GITHUB_OUTPUT"
+      - name: Make serving use it (reload, no gap)
+        run: deploy/web.sh reload champion
+      - name: Check /predict answers with the new champion
+        env:
+          VERSION_NOW: ${{ steps.promote.outputs.version }}
+        run: |
+          p=$(curl -fsS http://127.0.0.1/predict -H 'Content-Type: application/json' \
+            -d '{"pickup_zone_id": 132, "dropoff_zone_id": 230, "pickup_datetime": "2024-03-08T17:05:00"}')
+          echo "$p" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "$p" | jq -e --arg v "$VERSION_NOW" '.model.alias == "champion" and (.model.version|tostring) == $v'
+      - name: Status
+        if: always()
+        run: deploy/web.sh status | tee -a "$GITHUB_STEP_SUMMARY"

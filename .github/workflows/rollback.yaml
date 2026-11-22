@@ -1,0 +1,32 @@
+# App rollback (S3): flip traffic back to the other colour, without deploying anything. The old colour is
+# still running, so this takes seconds. Manual only. It refuses if the other colour isn't running.
+name: rollback
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    runs-on: [self-hosted, lab-app]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Switch to the other colour (timed)
+        run: |
+          start=$(date +%s.%N)
+          live=$(deploy/web.sh live)
+          case "$live" in blue) other=green ;; green) other=blue ;; *) echo "no live colour" >&2; exit 1 ;; esac
+          tag=$(deploy/web.sh tag "$other")
+          [ "$tag" != none ] || { echo "$other isn't running: nothing to roll back to" >&2; exit 1; }
+          deploy/web.sh smoke "$other"
+          deploy/web.sh switch "$other"
+          end=$(date +%s.%N)
+          echo "rolled back $live -> $other (runs ${tag}) in $(echo "$end - $start" | bc) s" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Status
+        run: deploy/web.sh status | tee -a "$GITHUB_STEP_SUMMARY"

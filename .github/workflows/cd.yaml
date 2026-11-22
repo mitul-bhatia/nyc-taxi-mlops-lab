@@ -1,7 +1,8 @@
-# S0 CD: after CI succeeds on main, deploy that exact commit's image on the app host, then smoke-test
-# /version. Runs on the self-hosted runner (label lab-app) with the host's instance profile
-# (decisions/001-runner-credentials.md). It is triggered only by workflow_run, never by a pull
-# request, and it checks that the CI run was a push in this repository, not a fork's.
+# CD (S3): blue-green. After CI succeeds on main, deploy that exact commit to the IDLE colour, smoke-test
+# it through Traefik (pinned by header, no rider traffic), and only if the smoke passes switch traffic.
+# The old colour keeps running for rollback (rollback.yaml). Decision 013.
+# Runs on the self-hosted runner (label lab-app) with the host's instance profile (decision 001). Triggered
+# only by workflow_run, never a pull request, and checks that the CI run was a push in this repository.
 name: cd
 
 on:
@@ -36,20 +37,39 @@ jobs:
           GH_ACTOR: ${{ github.actor }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
-      - name: Deploy
+      - name: Prepare (network, routes, Traefik)
         run: |
-          export IMAGE_PREFIX="ghcr.io/${GITHUB_REPOSITORY,,}" IMAGE_TAG="$HEAD_SHA"
-          docker compose -f deploy/compose.app.yaml up -d --pull always --wait --wait-timeout 120
-      - name: Smoke test /version
+          export IMAGE_PREFIX="ghcr.io/${GITHUB_REPOSITORY,,}"
+          deploy/web.sh prepare
+      - name: Deploy to the idle colour
         run: |
+          export IMAGE_PREFIX="ghcr.io/${GITHUB_REPOSITORY,,}"
+          live=$(deploy/web.sh live)
+          if [ "$live" = green ]; then target=blue; else target=green; fi
+          [ "$live" = none ] && target=blue
+          echo "live=$live target=$target" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "TARGET=$target" >> "$GITHUB_ENV"
+          # Each colour runs its own tag; the other colour's tag is left exactly as it is.
+          upper=$(echo "$target" | tr '[:lower:]' '[:upper:]')
+          export "${upper}_TAG=$HEAD_SHA"
+          docker compose -f deploy/compose.web.yaml up -d --pull always --no-deps --remove-orphans --wait --wait-timeout 120 "app-$target"
+      - name: Smoke-test the idle colour (must run this commit)
+        run: deploy/web.sh smoke "$TARGET" "$HEAD_SHA"
+      - name: Switch traffic
+        run: |
+          deploy/web.sh switch "$TARGET"
+          # The first deploy with this stack has a ~15 s gap while Traefik changes config; after that none.
           for i in $(seq 1 20); do
-            body=$(curl -fsS http://127.0.0.1/version || true)
-            echo "attempt $i: $body"
-            if [ "$(echo "$body" | jq -r '.git_sha // empty')" = "$HEAD_SHA" ]; then exit 0; fi
+            sha=$(curl -fsS http://127.0.0.1/version | jq -r '.git_sha // empty' || true)
+            echo "attempt $i: live reports $sha"
+            [ "$sha" = "$HEAD_SHA" ] && exit 0
             sleep 3
           done
-          echo "/version never reported $HEAD_SHA" >&2
+          echo "live traffic never reported $HEAD_SHA" >&2
           exit 1
+      - name: Status
+        if: always()
+        run: deploy/web.sh status | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Log out of GHCR
         if: always()
         run: docker logout ghcr.io
